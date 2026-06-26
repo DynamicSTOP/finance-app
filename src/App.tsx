@@ -138,7 +138,39 @@ const STORAGE_KEY = 'finance-planner-params';
 const CHART_MARGIN = { top: 10, right: 80, bottom: 10, left: 20 };
 const MARKS_KEY = 'finance-planner-marks';
 
+function paramsToHash(p: typeof DEFAULT): string {
+  const sp = new URLSearchParams({
+    r:  p.bankYearlyPercent.toString(),
+    c:  p.initialCapital.toString(),
+    ms: p.monthlyFromSalary.toString(),
+    hm: p.sideHustleAfterMonth.toString(),
+    hy: p.perYearExtraAfter5Years.toString(),
+    y:  p.afterYears.toString(),
+  });
+  return sp.toString();
+}
+
+function hashToParams(): Partial<typeof DEFAULT> | null {
+  const hash = window.location.hash.slice(1);
+  if (!hash) return null;
+  try {
+    const sp = new URLSearchParams(hash);
+    const result: Partial<typeof DEFAULT> = {};
+    if (sp.has('r'))  result.bankYearlyPercent      = parseFloat(sp.get('r')!);
+    if (sp.has('c'))  result.initialCapital          = parseFloat(sp.get('c')!);
+    if (sp.has('ms')) result.monthlyFromSalary        = parseFloat(sp.get('ms')!);
+    if (sp.has('hm')) result.sideHustleAfterMonth     = parseFloat(sp.get('hm')!);
+    if (sp.has('hy')) result.perYearExtraAfter5Years  = parseFloat(sp.get('hy')!);
+    if (sp.has('y'))  result.afterYears               = parseFloat(sp.get('y')!);
+    return Object.keys(result).length ? result : null;
+  } catch {
+    return null;
+  }
+}
+
 function loadParams(): typeof DEFAULT {
+  const fromHash = hashToParams();
+  if (fromHash) return { ...DEFAULT, ...fromHash };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT;
@@ -171,6 +203,7 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(params));
+    history.replaceState(null, '', '#' + paramsToHash(params));
   }, [params]);
 
   useEffect(() => {
