@@ -1,5 +1,7 @@
 # Finance Planner
 
+**Live demo:** https://dynamicstop.github.io/finance-app/
+
 A local React + TypeScript app for visualizing personal savings growth over time. Tweak parameters and see the chart update live.
 
 ## Stack
