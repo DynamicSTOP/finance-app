@@ -72,38 +72,68 @@ const CHART_MARGIN = { top: 10, right: 80, bottom: 10, left: 20 };
 
 // ── Encode / Decode ──────────────────────────────────────────────────────────
 
-type StoredSection = Omit<IncomeSection, 'id'>;
-type LegacyStoredSection = Omit<StoredSection, 'duration'> & { endMonth?: number };
-interface StoredState { g: GlobalParams; s: StoredSection[] }
+// v3 compact format (no base64):
+//   rate*10000|inflation*10000|capital|years||sm|a|em|d|e,…||step  (all values base36)
+//   enabled: '1' = true, '' = false
+// Legacy v1/v2: base64-encoded JSON — detected by absence of '||'
 
-function encodeState(state: AppState): string {
-  const data: StoredState = {
-    g: state.global,
-    s: state.sections.map(({ id: _id, ...rest }) => rest),
-  };
-  return btoa(JSON.stringify(data));
+type LegacySection = { startMonth: number; amount: number; everyMonths: number; duration?: number; endMonth?: number; enabled?: boolean };
+type LegacyCompactSection = { sm: number; a: number; em: number; d: number; e: boolean };
+
+const b36 = (n: number) => Math.round(n).toString(36);
+const fb36 = (s: string) => parseInt(s, 36) || 0;
+
+interface DecodedState { appState: AppState; step: number }
+
+function encodeState(state: AppState, step: number): string {
+  const g = state.global;
+  const global = [b36(g.bankYearlyPercent * 10000), b36(g.inflationYearlyPercent * 10000), b36(g.initialCapital), b36(g.afterYears)].join('|');
+  const sections = state.sections
+    .map(({ startMonth, amount, everyMonths, duration, enabled }) =>
+      [b36(startMonth), b36(amount), b36(everyMonths), b36(duration), enabled ? '1' : ''].join('|')
+    )
+    .join(',');
+  return `${global}||${sections}||${b36(step)}`;
 }
 
-function decodeState(encoded: string): AppState | null {
+function decodeState(encoded: string): DecodedState | null {
   try {
-    const data = JSON.parse(atob(encoded)) as StoredState;
+    if (encoded.includes('||')) {
+      const [globalPart, sectionsPart, stepPart] = encoded.split('||');
+      const [rb, ri, rc, ry] = globalPart.split('|');
+      const global: GlobalParams = {
+        bankYearlyPercent: fb36(rb) / 10000,
+        inflationYearlyPercent: fb36(ri) / 10000,
+        initialCapital: fb36(rc),
+        afterYears: fb36(ry),
+      };
+      const sections: IncomeSection[] = sectionsPart.split(',').map(seg => {
+        const [sm, a, em, d, e] = seg.split('|');
+        return { id: crypto.randomUUID(), startMonth: fb36(sm), amount: fb36(a), everyMonths: fb36(em), duration: fb36(d), enabled: e === '1' };
+      });
+      return { appState: { global, sections }, step: stepPart ? fb36(stepPart) : 12 };
+    }
+
+    // Legacy v1/v2: base64 JSON
+    const data = JSON.parse(atob(encoded));
     if (!data?.g || !Array.isArray(data?.s)) return null;
-    return {
-      global: { ...DEFAULT_GLOBAL, ...data.g },
-      sections: data.s.map((s: StoredSection | LegacyStoredSection) => {
-        const id = crypto.randomUUID();
-        if ('duration' in s) { const stored = s as StoredSection; return { ...stored, enabled: stored.enabled ?? true, id }; }
-        const end = (s as LegacyStoredSection).endMonth ?? 0;
-        const duration = end === 0 ? 0 : Math.max(0, end - s.startMonth + 1);
-        return { id, startMonth: s.startMonth, amount: s.amount, everyMonths: s.everyMonths, duration, enabled: true };
-      }),
-    };
+    const global: GlobalParams = 'b' in data.g
+      ? { bankYearlyPercent: data.g.b, initialCapital: data.g.c, inflationYearlyPercent: data.g.i, afterYears: data.g.y }
+      : { ...DEFAULT_GLOBAL, ...data.g };
+    const sections: IncomeSection[] = data.s.map((s: LegacyCompactSection | LegacySection) => {
+      const id = crypto.randomUUID();
+      if ('sm' in s) return { id, startMonth: s.sm, amount: s.a, everyMonths: s.em, duration: s.d, enabled: s.e };
+      const ls = s as LegacySection;
+      const duration = ls.duration !== undefined ? ls.duration : ls.endMonth ? Math.max(0, ls.endMonth - ls.startMonth + 1) : 0;
+      return { id, startMonth: ls.startMonth, amount: ls.amount, everyMonths: ls.everyMonths, duration, enabled: ls.enabled ?? true };
+    });
+    return { appState: { global, sections }, step: 12 };
   } catch {
     return null;
   }
 }
 
-function loadState(): AppState {
+function loadInitialState(): DecodedState {
   const hash = window.location.hash.slice(1);
   if (hash) {
     const decoded = decodeState(hash);
@@ -116,19 +146,10 @@ function loadState(): AppState {
       if (decoded) return decoded;
     }
   } catch { /* ignore */ }
-  return { global: DEFAULT_GLOBAL, sections: DEFAULT_SECTIONS };
+  return { appState: { global: DEFAULT_GLOBAL, sections: DEFAULT_SECTIONS }, step: 12 };
 }
 
-const STEP_KEY = 'finance-planner-step';
-
-function loadStep(): number {
-  try {
-    const raw = localStorage.getItem(STEP_KEY);
-    return raw ? (parseInt(raw) || 12) : 12;
-  } catch {
-    return 12;
-  }
-}
+const INITIAL_STATE = loadInitialState();
 
 function loadMarks(): Mark[] {
   try {
@@ -338,7 +359,7 @@ const SectionItem = memo(function SectionItem({ section, isOpen, onToggle, onUpd
 // ── Main App ─────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [appState, setAppState] = useState<AppState>(loadState);
+  const [appState, setAppState] = useState<AppState>(INITIAL_STATE.appState);
   const { global: globalParams, sections } = appState;
 
   const [openSections, setOpenSections] = useState<Set<string>>(new Set);
@@ -346,24 +367,20 @@ export default function App() {
   const [visibleSeries, setVisibleSeries] = useState(
     Object.fromEntries(SERIES.map(s => [s.key, true]))
   );
-  const [step, setStep] = useState(loadStep);
+  const [step, setStep] = useState(INITIAL_STATE.step);
   const [logScale, setLogScale] = useState(false);
   const [marks, setMarks] = useState<Mark[]>(loadMarks);
   const [panelOpen, setPanelOpen] = useState(false);
 
   useEffect(() => {
-    const encoded = encodeState(appState);
+    const encoded = encodeState(appState, step);
     localStorage.setItem(STORAGE_KEY, encoded);
     history.replaceState(null, '', '#' + encoded);
-  }, [appState]);
+  }, [appState, step]);
 
   useEffect(() => {
     localStorage.setItem(MARKS_KEY, JSON.stringify(marks));
   }, [marks]);
-
-  useEffect(() => {
-    localStorage.setItem(STEP_KEY, String(step));
-  }, [step]);
 
   const allData = useMemo(() => calculate({ ...globalParams, sections }), [globalParams, sections]);
   const data = useMemo(
