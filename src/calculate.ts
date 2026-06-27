@@ -5,6 +5,7 @@ export interface CalcParams {
   perYearExtraAfter5Years: number;
   monthlyFromSalary: number;
   afterYears: number;
+  inflationYearlyPercent: number;
 }
 
 export interface DataPoint {
@@ -14,6 +15,8 @@ export interface DataPoint {
   diff: number;
   currentBalance: number;
   interestEarned: number;
+  simpleSavings: number;
+  inflationAdjustedBalance: number;
 }
 
 export function calculate({
@@ -23,8 +26,10 @@ export function calculate({
   perYearExtraAfter5Years,
   monthlyFromSalary,
   afterYears,
+  inflationYearlyPercent,
 }: CalcParams): DataPoint[] {
   const monthlyRate = bankYearlyPercent / 12;
+  const monthlyInflationRate = inflationYearlyPercent / 12;
   const totalMonths = afterYears * 12;
   let balance = initialCapital;
   let oldBalance = initialCapital;
@@ -48,6 +53,8 @@ export function calculate({
       diff: Math.floor(balance - oldBalance),
       currentBalance: Math.floor(balance),
       interestEarned: Math.floor(interestEarned),
+      simpleSavings: Math.floor(initialCapital + month * monthlyFromSalary),
+      inflationAdjustedBalance: Math.floor(balance / (1 + monthlyInflationRate) ** month),
     });
 
     oldBalance = balance;

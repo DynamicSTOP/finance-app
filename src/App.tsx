@@ -34,12 +34,15 @@ const DEFAULT = {
   perYearExtraAfter5Years: 10000,
   monthlyFromSalary: 2000,
   afterYears: 30,
+  inflationYearlyPercent: 0.05,
 };
 
 const SERIES = [
-  { key: 'currentBalance', color: '#4f8ef7', label: 'Balance' },
-  { key: 'diff',           color: '#34d399', label: 'Monthly Gain' },
-  { key: 'interestEarned', color: '#f59e0b', label: 'Interest' },
+  { key: 'currentBalance',         color: '#4f8ef7', label: 'Balance' },
+  { key: 'inflationAdjustedBalance', color: '#f43f5e', label: 'Real Value (inflation-adj.)' },
+  { key: 'simpleSavings',          color: '#a78bfa', label: 'No-Interest Savings' },
+  { key: 'diff',                   color: '#34d399', label: 'Monthly Gain' },
+  { key: 'interestEarned',         color: '#f59e0b', label: 'Interest' },
 ];
 
 interface Mark {
@@ -146,6 +149,7 @@ function paramsToHash(p: typeof DEFAULT): string {
     hm: p.sideHustleAfterMonth.toString(),
     hy: p.perYearExtraAfter5Years.toString(),
     y:  p.afterYears.toString(),
+    i:  p.inflationYearlyPercent.toString(),
   });
   return sp.toString();
 }
@@ -162,6 +166,7 @@ function hashToParams(): Partial<typeof DEFAULT> | null {
     if (sp.has('hm')) result.sideHustleAfterMonth     = parseFloat(sp.get('hm')!);
     if (sp.has('hy')) result.perYearExtraAfter5Years  = parseFloat(sp.get('hy')!);
     if (sp.has('y'))  result.afterYears               = parseFloat(sp.get('y')!);
+    if (sp.has('i'))  result.inflationYearlyPercent    = parseFloat(sp.get('i')!);
     return Object.keys(result).length ? result : null;
   } catch {
     return null;
@@ -236,8 +241,8 @@ export default function App() {
 
   const leftLogTicks = useMemo(
     () => logTicks(
-      Math.min(...allData.map(d => d.currentBalance)),
-      Math.max(...allData.map(d => d.currentBalance)),
+      Math.min(...allData.map(d => Math.min(d.currentBalance, d.simpleSavings, d.inflationAdjustedBalance))),
+      Math.max(...allData.map(d => Math.max(d.currentBalance, d.simpleSavings, d.inflationAdjustedBalance))),
     ),
     [allData],
   );
@@ -322,6 +327,7 @@ export default function App() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 180, overflowY: 'auto', flexShrink: 0 }}>
           <h2 style={{ margin: 0, fontSize: 14, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 1 }}>Parameters</h2>
           <NumInput label="Annual Rate (%)" name="bankYearlyPercent" value={params.bankYearlyPercent} onChange={setParam} step={0.1} isPercent />
+          <NumInput label="Inflation Rate (%)" name="inflationYearlyPercent" value={params.inflationYearlyPercent} onChange={setParam} step={0.1} isPercent />
           <NumInput label="Initial Capital ($)" name="initialCapital" value={params.initialCapital} onChange={setParam} step={1000} />
           <NumInput label="Monthly Salary Saving ($)" name="monthlyFromSalary" value={params.monthlyFromSalary} onChange={setParam} step={100} />
           <NumInput label="Side Hustle Starts (month)" name="sideHustleAfterMonth" value={params.sideHustleAfterMonth} onChange={setParam} />
@@ -399,6 +405,12 @@ export default function App() {
 
               {visibleSeries.currentBalance && (
                 <Area yAxisId="left" type="monotone" dataKey="currentBalance" name="Balance" fill="#4f8ef720" stroke="#4f8ef7" strokeWidth={2} dot={false} />
+              )}
+              {visibleSeries.inflationAdjustedBalance && (
+                <Line yAxisId="left" type="monotone" dataKey="inflationAdjustedBalance" name="Real Value (inflation-adj.)" stroke="#f43f5e" strokeWidth={1.5} dot={false} strokeDasharray="6 3" />
+              )}
+              {visibleSeries.simpleSavings && (
+                <Line yAxisId="left" type="monotone" dataKey="simpleSavings" name="No-Interest Savings" stroke="#a78bfa" strokeWidth={1.5} dot={false} strokeDasharray="5 3" />
               )}
               {visibleSeries.diff && (
                 <Line yAxisId="right" type="monotone" dataKey="diff" name="Monthly Gain" stroke="#34d399" strokeWidth={1.5} dot={false} />
